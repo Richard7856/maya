@@ -1,0 +1,26 @@
+# Web framework
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+
+# Supabase client (used for Storage presigning + admin auth operations)
+supabase==2.10.0
+
+# JWT validation — Supabase issues standard HS256 JWTs
+python-jose[cryptography]==3.3.0
+
+# HTTP client for calling n8n webhooks and external APIs
+httpx==0.28.1
+
+# Stripe SDK
+stripe==11.3.0
+
+# Environment variable management
+python-dotenv==1.0.1
+
+# Password hashing (for temporary passwords during onboarding invite)
+passlib[bcrypt]==1.7.4
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.25.0
+httpx  # also used as async test client

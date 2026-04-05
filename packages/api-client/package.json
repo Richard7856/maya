@@ -1,0 +1,20 @@
+{
+  "name": "@maya/api-client",
+  "version": "0.0.1",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@maya/types": "workspace:*",
+    "axios": "^1.7.9"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}
