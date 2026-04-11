@@ -44,8 +44,9 @@ pnpm-debug.log*
 *.swp
 *.swo
 
-# Claude Code local settings (may contain API keys)
-.claude/
+# Claude Code — ignorar archivos locales con credenciales, versionar solo commands
+.claude/settings.local.json
+.claude/launch.json
 
 # Testing
 coverage
