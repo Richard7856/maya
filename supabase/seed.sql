@@ -6,8 +6,13 @@
 -- buildings, rooms, leases, incidents, tickets, and cleaning
 -- assignments so the dashboard has real content to display.
 --
--- All auth.users entries (including admin) are created by this seed.
--- No manual Auth setup needed — just run this after the schema migration.
+-- ⚠️  PASSWORDS: Los auth.users se insertan con contraseñas placeholder.
+--     Después de correr este seed, cambia las contraseñas desde el
+--     dashboard de Supabase (Authentication → Users) o vía la CLI:
+--       supabase auth update-user <uuid> --password "TuPasswordSegura"
+--
+--     Las contraseñas de este archivo son SOLO para inicializar el hash.
+--     NO uses estas cuentas en producción sin cambiar las contraseñas.
 -- ============================================================
 
 DO $$
@@ -65,16 +70,18 @@ BEGIN
 
 -- ── Auth Users (minimal records so FK to auth.users is satisfied) ──
 -- All users need auth.users entries for the user_profiles FK constraint.
+-- Passwords se inicializan con un hash aleatorio — deben cambiarse manualmente
+-- después de correr el seed (ver instrucciones al inicio del archivo).
 INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at, confirmation_token, recovery_token)
 VALUES
-  (v_admin_id,    '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'admin@maya.com',        crypt('SEED_PASS_REMOVED', gen_salt('bf')), NOW(), NOW(), NOW(), '', ''),
-  (v_tenant1_id,  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'carlos@demo.maya.app',  crypt('SEED_PASS_REMOVED', gen_salt('bf')), NOW(), NOW(), NOW(), '', ''),
-  (v_tenant2_id,  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'maria@demo.maya.app',   crypt('SEED_PASS_REMOVED', gen_salt('bf')), NOW(), NOW(), NOW(), '', ''),
-  (v_tenant3_id,  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'roberto@demo.maya.app', crypt('SEED_PASS_REMOVED', gen_salt('bf')), NOW(), NOW(), NOW(), '', ''),
-  (v_tenant4_id,  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'ana@demo.maya.app',     crypt('SEED_PASS_REMOVED', gen_salt('bf')), NOW(), NOW(), NOW(), '', ''),
-  (v_cleaner1_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'lucia@demo.maya.app',   crypt('SEED_PASS_REMOVED', gen_salt('bf')), NOW(), NOW(), NOW(), '', ''),
-  (v_cleaner2_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'pedro@demo.maya.app',   crypt('SEED_PASS_REMOVED', gen_salt('bf')), NOW(), NOW(), NOW(), '', ''),
-  (v_security1_id,'00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'jorge@demo.maya.app',   crypt('SEED_PASS_REMOVED', gen_salt('bf')), NOW(), NOW(), NOW(), '', '')
+  (v_admin_id,    '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'admin@maya.com',        crypt(md5(v_admin_id::text),    gen_salt('bf')), NOW(), NOW(), NOW(), '', ''),
+  (v_tenant1_id,  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'carlos@demo.maya.app',  crypt(md5(v_tenant1_id::text),  gen_salt('bf')), NOW(), NOW(), NOW(), '', ''),
+  (v_tenant2_id,  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'maria@demo.maya.app',   crypt(md5(v_tenant2_id::text),  gen_salt('bf')), NOW(), NOW(), NOW(), '', ''),
+  (v_tenant3_id,  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'roberto@demo.maya.app', crypt(md5(v_tenant3_id::text),  gen_salt('bf')), NOW(), NOW(), NOW(), '', ''),
+  (v_tenant4_id,  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'ana@demo.maya.app',     crypt(md5(v_tenant4_id::text),  gen_salt('bf')), NOW(), NOW(), NOW(), '', ''),
+  (v_cleaner1_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'lucia@demo.maya.app',   crypt(md5(v_cleaner1_id::text), gen_salt('bf')), NOW(), NOW(), NOW(), '', ''),
+  (v_cleaner2_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'pedro@demo.maya.app',   crypt(md5(v_cleaner2_id::text), gen_salt('bf')), NOW(), NOW(), NOW(), '', ''),
+  (v_security1_id,'00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'jorge@demo.maya.app',   crypt(md5(v_security1_id::text),gen_salt('bf')), NOW(), NOW(), NOW(), '', '')
 ON CONFLICT (id) DO NOTHING;
 
 -- Also need identity records for Supabase Auth to work
@@ -204,11 +211,11 @@ FROM notifications n WHERE n.type = 'incident_update' LIMIT 1;
 
 RAISE NOTICE '✓ Seed data inserted successfully.';
 RAISE NOTICE '';
-RAISE NOTICE 'Demo users:';
-RAISE NOTICE '  Admin:    admin@maya.com / SEED_PASS_REMOVED';
-RAISE NOTICE '  Tenants:  Carlos López, María Hernández, Roberto García (locked), Ana Martínez';
-RAISE NOTICE '  Cleaners: Lucía Ramírez, Pedro Sánchez';
-RAISE NOTICE '  Security: Jorge Torres';
+RAISE NOTICE 'Demo users (passwords son hashes de UUID — cambia via Supabase dashboard):';
+RAISE NOTICE '  Admin:    admin@maya.com';
+RAISE NOTICE '  Tenants:  carlos@demo.maya.app, maria@demo.maya.app, roberto@demo.maya.app (locked), ana@demo.maya.app';
+RAISE NOTICE '  Cleaners: lucia@demo.maya.app, pedro@demo.maya.app';
+RAISE NOTICE '  Security: jorge@demo.maya.app';
 RAISE NOTICE '';
 RAISE NOTICE 'Buildings: Álamos (4 rooms), Del Valle (3 rooms), Coyoacán (3 rooms)';
 RAISE NOTICE 'Leases: 4 active | Payments: 2 paid, 1 pending, 1 overdue';
