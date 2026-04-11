@@ -44,6 +44,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000   # Dev server
 pytest                                       # Run tests
+python -m scripts.encrypt_existing_codes    # One-time: encrypt plaintext access codes (idempotent)
 ```
 
 ### Infrastructure
@@ -83,6 +84,8 @@ Backend triggers n8n workflows via `POST http://n8n:5678/webhook/{workflow_name}
 ### Shared Packages Pattern
 `packages/types` mirrors DB enums/DTOs → consumed by `packages/api-client` and apps. Changes to DB schema should be reflected in `packages/types/src/index.ts`.
 
+`packages/api-client` exports `setAuthToken(token)` — call this on every Supabase auth state change to attach the JWT to all requests. All API methods return `.then((r) => r.data)` so callers receive the unwrapped payload directly.
+
 ## Backend Layout
 
 ```
@@ -96,21 +99,101 @@ backend/app/
 ├── routers/
 │   ├── buildings.py           # /api/v1/buildings — list, KPIs, rooms
 │   ├── payments.py            # /api/v1/payments — Stripe intents, access codes, webhook
-│   └── storage.py             # /api/v1/storage — presigned upload URLs
+│   ├── storage.py             # /api/v1/storage — presigned upload URLs
+│   ├── users.py               # /api/v1/users — profiles, lock/unlock; /me before /{id}
+│   ├── leases.py              # /api/v1/leases — create/terminate with room status sync; /mine for tenant
+│   ├── incidents.py           # /api/v1/incidents — room-scoped via active lease helper
+│   ├── tickets.py             # /api/v1/tickets — work orders; staff status transitions restricted
+│   └── cleaning.py            # /api/v1/cleaning — assignments + sessions with GPS; time blocks 1-4
+├── services/
+│   └── encryption.py          # Fernet AES-128-CBC + HMAC; key derived from APP_SECRET_KEY
 └── integrations/
     ├── n8n.py                 # Webhook trigger helper
     ├── push.py                # Expo push notifications
     └── whatsapp.py            # Meta Cloud API (es_MX templates)
+
+backend/scripts/
+└── encrypt_existing_codes.py  # One-time migration; run: python -m scripts.encrypt_existing_codes
+
+backend/tests/
+├── conftest.py                # Fixtures: make_jwt(), make_supabase_mock(), dependency_overrides
+└── test_auth.py               # JWT validation + role guard tests
 ```
 
 All API routes are prefixed with `/api/v1/`. Health check at `GET /health`.
+
+## Backend Patterns
+
+### Dependency Injection (`Annotated` + `Depends`)
+All routers inject auth and the Supabase client via `Annotated[Type, Depends(...)]`:
+```python
+async def my_endpoint(
+    current_user: Annotated[UserProfile, Depends(get_current_user)],
+    supabase: Annotated[Client, Depends(get_supabase_admin)],
+):
+```
+Admin-only guard when the variable isn't used in the handler body: `_admin: Annotated[UserProfile, Depends(require_admin)]`
+
+### Role-Aware Filtering
+Non-admin roles are automatically scoped — never return all rows to restricted roles:
+```python
+if current_user.role != "admin":
+    query = query.eq("cleaner_id", str(current_user.id))
+```
+
+### Conditional Field Updates (sparse PATCH)
+Build update payloads excluding `None` fields to avoid overwriting existing DB values:
+```python
+updates = {k: v for k, v in body.model_dump().items() if v is not None}
+```
+
+### Endpoint Ordering: Literal Before Parameterized
+Literal segments (`/me`, `/mine`) must be registered **before** `/{id}` in the same router. FastAPI matches routes in registration order — if `/{user_id}` comes first, "me" is parsed as a UUID and returns 422.
+
+### Room Scoping via Active Lease
+Tenants are scoped to their room through a private helper that queries the `leases` table:
+```python
+def _get_tenant_room_id(user_id: str, supabase: Client) -> str | None:
+    result = (supabase.table("leases").select("room_id")
+        .eq("tenant_id", user_id).eq("status", "active").limit(1).execute())
+    return result.data[0]["room_id"] if result.data else None
+```
+This is a local helper per router (not a shared utility). Replicate this pattern when other resources need tenant-room scoping.
+
+## Encryption Service
+
+`backend/app/services/encryption.py` encrypts sensitive fields stored in the DB.
+
+- **Algorithm**: Fernet (AES-128-CBC + HMAC-SHA256)
+- **Key derivation**: PBKDF2-SHA256 from `APP_SECRET_KEY` env var, 480,000 iterations, stable salt `b"maya-access-code-v1"`
+- **Functions**: `encrypt_access_code(str) → str`, `decrypt_access_code(str) → str` (raises `ValueError` on corrupt data)
+
+**Critical**: Changing `APP_SECRET_KEY` or the derivation salt invalidates all existing ciphertext. The key is re-derived on every call — nothing is cached.
+
+## Testing
+
+### Required Pattern: `dependency_overrides` (not `mock.patch`)
+FastAPI's DI container must be overridden via `app.dependency_overrides` — `unittest.mock.patch` does not intercept `Depends()`:
+```python
+# Correct
+app.dependency_overrides[get_supabase_admin] = lambda: make_supabase_mock()
+
+# Wrong — patch bypasses DI and tests pass without exercising real auth code
+with mock.patch("app.dependencies.supabase.get_supabase_admin", ...): ...
+```
+
+### Key Fixtures (`backend/tests/conftest.py`)
+- `make_jwt(user_id, expired, audience, secret)` — creates real HS256 tokens (exercises full decode path, not mocked)
+- `make_supabase_mock(profile_data)` — mock Supabase client with chainable `.table().select().eq().single().execute()`
+- `admin_profile` / `tenant_profile` — pre-built profile dicts matching DB shape
+- `_override_settings` — `autouse` fixture that injects test env vars and clears the `get_settings` LRU cache between tests
 
 ## Database Schema Highlights
 
 Key tables: `buildings`, `rooms`, `user_profiles`, `leases`, `payments`, `onboarding_applications`, `incidents`, `complaints` (with anonymous `complaints_safe` view), `tickets`, `cleaning_assignments`, `cleaning_sessions`, `access_events`, `guest_accesses`, `notifications`, `moveout_requests`, `eviction_cases`.
 
 - `user_profiles.is_locked` — set on day 11 of non-payment (WF-02)
-- `leases.access_code_encrypted` — currently plaintext, Phase 7 will encrypt with `APP_SECRET_KEY`
+- `leases.access_code_encrypted` — Fernet-encrypted (see Encryption Service); use `decrypt_access_code()` to read, never store plaintext
 - `leases.payment_day` — 1-28, controls when rent is due
 - `complaints` uses `is_anonymous` (default TRUE) and `complaints_safe` view hides identities
 - `cleaning_assignments.time_block` — 1-4 mapping to 2-hour windows (8:00-16:00)
@@ -121,4 +204,6 @@ Key tables: `buildings`, `rooms`, `user_profiles`, `leases`, `payments`, `onboar
 - **API versioning**: All endpoints under `/api/v1/`
 - **Environment**: `ENVIRONMENT=development|production` controls docs visibility and error detail
 - **Docker networking**: Services communicate on `maya-network`; n8n reached at `http://n8n:5678` from API container
+- **Role-restricted status transitions**: Non-admin roles can only set a whitelisted subset of statuses (e.g., cleaners: `{confirmed, in_progress, completed}`; ticket staff: `{in_progress, resolved}`). Validate in the handler before the DB write.
+- **409 on duplicate active resources**: Active lease per room and cleaning assignment per cleaner+room+date enforce DB-level uniqueness. Catch the constraint violation and re-raise as HTTP 409.
 - **Production domains**: `api.maya.app` (API), `automation.maya.app` (n8n), `dashboard.maya.app` (web) — routed via Traefik with Let's Encrypt TLS

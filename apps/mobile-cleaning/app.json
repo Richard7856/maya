@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "Maya Limpieza",
+    "slug": "maya-cleaning",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "maya-cleaning",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": { "supportsTablet": false, "bundleIdentifier": "app.maya.cleaning" },
+    "android": { "package": "app.maya.cleaning", "adaptiveIcon": { "backgroundColor": "#ffffff" } },
+    "web": { "bundler": "metro", "output": "static" },
+    "plugins": ["expo-router", "expo-font"],
+    "experiments": { "typedRoutes": true }
+  }
+}

@@ -13,8 +13,12 @@ export interface AccessCodeResponse {
 }
 
 export const paymentsApi = {
-  list: () =>
-    apiClient.get<Payment[]>("/payments").then((r) => r.data),
+  // Admin endpoint — returns payments joined with lease, room, and tenant profile.
+  // status filter matches PaymentStatus enum values.
+  list: (params?: { status?: string; building_id?: string }) =>
+    apiClient
+      .get<Payment[]>("/payments", { params })
+      .then((r) => r.data),
 
   // Creates a Stripe PaymentIntent server-side and returns the client_secret
   createIntent: (paymentId: string) =>

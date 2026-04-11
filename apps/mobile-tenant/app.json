@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "Maya Inquilino",
+    "slug": "maya-tenant",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "maya-tenant",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": { "supportsTablet": false, "bundleIdentifier": "app.maya.tenant" },
+    "android": { "package": "app.maya.tenant", "adaptiveIcon": { "backgroundColor": "#ffffff" } },
+    "web": { "bundler": "metro", "output": "static" },
+    "plugins": ["expo-router", "expo-font"],
+    "experiments": { "typedRoutes": true }
+  }
+}

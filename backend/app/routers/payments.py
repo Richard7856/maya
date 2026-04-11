@@ -17,13 +17,48 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from supabase import Client
 
 from app.config import get_settings
-from app.dependencies.auth import require_tenant
+from app.dependencies.auth import require_admin, require_tenant
 from app.dependencies.supabase import get_supabase_admin
 from app.integrations.n8n import trigger_workflow
 from app.integrations.push import send_push_to_user
 from app.models.user import UserProfile
+from app.services.encryption import decrypt_access_code
 
 router = APIRouter(prefix="/payments", tags=["payments"])
+
+# Joins lease → room + tenant so the admin dashboard has full context per row.
+_PAYMENT_SELECT = (
+    "*, leases!inner("
+    "  id, monthly_rate, payment_day,"
+    "  rooms!inner(room_number, section, building_id),"
+    "  user_profiles!inner(first_name, last_name)"
+    ")"
+)
+
+
+@router.get("")
+async def list_payments(
+    status: str | None = None,
+    building_id: UUID | None = None,
+    _admin: Annotated[UserProfile, Depends(require_admin)] = None,
+    supabase: Annotated[Client, Depends(get_supabase_admin)] = None,
+):
+    """Lists all payments for the admin dashboard.
+
+    Returns payments joined with lease, room, and tenant profile so the UI
+    can show room number and tenant name without extra round-trips.
+    Supports optional filtering by status and building_id.
+    """
+    query = supabase.table("payments").select(_PAYMENT_SELECT).order("due_date", desc=True)
+
+    if status:
+        query = query.eq("status", status)
+    if building_id:
+        # Filter via the nested rooms relation
+        query = query.eq("leases.rooms.building_id", str(building_id))
+
+    result = query.execute()
+    return result.data
 
 
 @router.post("/{payment_id}/pay")
@@ -141,9 +176,13 @@ async def get_access_code(
             detail="Access code not yet assigned. Contact administration.",
         )
 
-    # The code is stored as plaintext in this phase.
-    # TODO: Encrypt at rest with app_secret_key before production launch.
-    return {"access_code": encrypted_code}
+    try:
+        code = decrypt_access_code(encrypted_code)
+    except ValueError:
+        # Fallback for legacy plaintext codes not yet migrated
+        code = encrypted_code
+
+    return {"access_code": code}
 
 
 @router.post("/webhook/stripe")

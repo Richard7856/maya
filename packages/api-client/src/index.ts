@@ -5,3 +5,8 @@ export { paymentsApi } from "./payments";
 export type { PaymentIntentResponse, AccessCodeResponse } from "./payments";
 export { storageApi } from "./storage";
 export type { PresignedUrlResponse } from "./storage";
+export { usersApi } from "./users";
+export { leasesApi } from "./leases";
+export { incidentsApi } from "./incidents";
+export { ticketsApi } from "./tickets";
+export { cleaningApi } from "./cleaning";

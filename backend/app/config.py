@@ -30,9 +30,16 @@ class Settings(BaseSettings):
     environment: str = "development"
     app_secret_key: str
 
+    # Comma-separated allowed origins — override in .env for staging/prod
+    cors_origins: str = "http://localhost:3000,http://localhost:8081,https://dashboard.maya.app"
+
     @property
     def is_production(self) -> bool:
         return self.environment == "production"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     class Config:
         env_file = ".env"
