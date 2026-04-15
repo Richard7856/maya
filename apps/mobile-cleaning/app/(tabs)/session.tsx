@@ -1,3 +1,7 @@
+// Pantalla de sesión de limpieza activa.
+// Recibe `assignmentId` como param de ruta desde My Tasks.
+// Al iniciar: solicita permiso GPS y registra la sesión en el backend.
+// Al completar: envía el checklist al backend.
 import {
   View,
   Text,
@@ -5,12 +9,16 @@ import {
   StyleSheet,
   TouchableOpacity,
   Alert,
-  Platform,
+  ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import * as Location from "expo-location";
+import { cleaningApi } from "@maya/api-client";
+import type { CleaningAssignment } from "@maya/types";
 
-// Cleaning checklist items — mirrors typical co-living room checklist
+// Checklist estándar — aplica a todas las habitaciones
 const CHECKLIST_ITEMS = [
   { id: "c1", section: "Baño", label: "Limpiar inodoro" },
   { id: "c2", section: "Baño", label: "Limpiar lavabo y espejo" },
@@ -24,15 +32,15 @@ const CHECKLIST_ITEMS = [
   { id: "c10", section: "General", label: "Reportar daños o faltantes" },
 ];
 
-// Demo active assignment
-const DEMO_ASSIGNMENT = {
-  id: "ca-002",
-  room: "301-B",
-  floor: 3,
-  time_block: 2,
-  timeRange: "10:00 – 12:00",
-  tenant: "Carlos Mendoza",
-  notes: "",
+const TIME_BLOCKS: Record<number, string> = {
+  1: "08:00 – 10:00",
+  2: "10:00 – 12:00",
+  3: "12:00 – 14:00",
+  4: "14:00 – 16:00",
+};
+
+type AssignmentWithRoom = CleaningAssignment & {
+  rooms?: { room_number: string; section?: string | null };
 };
 
 function useTimer(running: boolean) {
@@ -53,11 +61,13 @@ function ChecklistSection({
   items,
   checked,
   onToggle,
+  disabled,
 }: {
   section: string;
   items: typeof CHECKLIST_ITEMS;
   checked: Set<string>;
   onToggle: (id: string) => void;
+  disabled: boolean;
 }) {
   return (
     <View style={styles.section}>
@@ -66,20 +76,15 @@ function ChecklistSection({
         <TouchableOpacity
           key={item.id}
           style={styles.checkItem}
-          onPress={() => onToggle(item.id)}
-          activeOpacity={0.7}
+          onPress={() => !disabled && onToggle(item.id)}
+          activeOpacity={disabled ? 1 : 0.7}
         >
           <View style={[styles.checkbox, checked.has(item.id) && styles.checkboxDone]}>
             {checked.has(item.id) && (
               <Ionicons name="checkmark" size={14} color="#fff" />
             )}
           </View>
-          <Text
-            style={[
-              styles.checkLabel,
-              checked.has(item.id) && styles.checkLabelDone,
-            ]}
-          >
+          <Text style={[styles.checkLabel, checked.has(item.id) && styles.checkLabelDone]}>
             {item.label}
           </Text>
         </TouchableOpacity>
@@ -89,32 +94,79 @@ function ChecklistSection({
 }
 
 export default function SessionScreen() {
-  const [started, setStarted] = useState(false);
-  const [checked, setChecked] = useState<Set<string>>(new Set());
-  const [gpsGranted, setGpsGranted] = useState<boolean | null>(null);
-  const timer = useTimer(started);
+  const { assignmentId } = useLocalSearchParams<{ assignmentId?: string }>();
+  const router = useRouter();
 
+  const [assignment, setAssignment] = useState<AssignmentWithRoom | null>(null);
+  const [loadingAssignment, setLoadingAssignment] = useState(false);
+
+  const [started, setStarted] = useState(false);
+  const [finishing, setFinishing] = useState(false);
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [gpsStatus, setGpsStatus] = useState<"idle" | "granted" | "denied">("idle");
+
+  const timer = useTimer(started);
   const totalItems = CHECKLIST_ITEMS.length;
   const checkedCount = checked.size;
   const progress = totalItems > 0 ? checkedCount / totalItems : 0;
   const allDone = checkedCount === totalItems;
-
   const sections = Array.from(new Set(CHECKLIST_ITEMS.map((i) => i.section)));
 
+  // Carga los detalles de la asignación si se recibe un ID
+  useEffect(() => {
+    if (!assignmentId) return;
+    setLoadingAssignment(true);
+    cleaningApi
+      .getAssignment(assignmentId)
+      .then((data) => setAssignment(data as AssignmentWithRoom))
+      .catch(() => Alert.alert("Error", "No se pudo cargar la asignación."))
+      .finally(() => setLoadingAssignment(false));
+  }, [assignmentId]);
+
+  async function getGpsCoords(): Promise<{ arrival_lat: number; arrival_lng: number } | null> {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== "granted") {
+      setGpsStatus("denied");
+      return null;
+    }
+    setGpsStatus("granted");
+    const loc = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.High,
+    });
+    return { arrival_lat: loc.coords.latitude, arrival_lng: loc.coords.longitude };
+  }
+
   const handleStart = async () => {
-    // In production: request expo-location permission, get GPS coords
-    // POST /api/v1/cleaning/sessions with { assignment_id, latitude, longitude }
-    // For demo: simulate permission grant
+    if (!assignmentId) return;
+
     Alert.alert(
       "Iniciar limpieza",
-      "Se registrará tu ubicación GPS al iniciar y al finalizar la sesión.",
+      "Se registrará tu ubicación GPS al iniciar la sesión.",
       [
         { text: "Cancelar", style: "cancel" },
         {
           text: "Iniciar",
-          onPress: () => {
-            setGpsGranted(true);
-            setStarted(true);
+          onPress: async () => {
+            const coords = await getGpsCoords();
+            if (!coords) {
+              Alert.alert(
+                "GPS requerido",
+                "Activa la ubicación para registrar tu llegada.",
+                [{ text: "OK" }]
+              );
+              return;
+            }
+            try {
+              await cleaningApi.startSession(assignmentId, coords);
+              setStarted(true);
+            } catch (e: any) {
+              // Si ya hay sesión activa (segunda visita), continuar de todas formas
+              if (e?.response?.status === 409) {
+                setStarted(true);
+              } else {
+                Alert.alert("Error", "No se pudo iniciar la sesión. Intenta de nuevo.");
+              }
+            }
           },
         },
       ]
@@ -128,11 +180,7 @@ export default function SessionScreen() {
         `Faltan ${totalItems - checkedCount} tarea(s). ¿Deseas finalizar de todas formas?`,
         [
           { text: "Continuar limpiando", style: "cancel" },
-          {
-            text: "Finalizar",
-            style: "destructive",
-            onPress: confirmFinish,
-          },
+          { text: "Finalizar", style: "destructive", onPress: confirmFinish },
         ]
       );
       return;
@@ -140,11 +188,37 @@ export default function SessionScreen() {
     confirmFinish();
   };
 
-  const confirmFinish = () => {
-    // In production: PATCH /api/v1/cleaning/sessions/{id}/end with GPS + completion data
-    Alert.alert("Sesión completada", `Limpieza del cuarto ${DEMO_ASSIGNMENT.room} registrada correctamente. ¡Buen trabajo!`, [
-      { text: "OK", onPress: () => setStarted(false) },
-    ]);
+  const confirmFinish = async () => {
+    if (!assignmentId) return;
+    setFinishing(true);
+
+    const checklistPayload = CHECKLIST_ITEMS.map((item) => ({
+      label: item.label,
+      is_done: checked.has(item.id),
+    }));
+
+    try {
+      await cleaningApi.completeSession(assignmentId, checklistPayload);
+      Alert.alert(
+        "Sesión completada",
+        `Limpieza del cuarto ${assignment?.rooms?.room_number ?? ""} registrada correctamente. ¡Buen trabajo!`,
+        [
+          {
+            text: "OK",
+            onPress: () => {
+              setStarted(false);
+              setChecked(new Set());
+              // Regresa a la lista para ver la siguiente asignación
+              router.replace("/(tabs)");
+            },
+          },
+        ]
+      );
+    } catch {
+      Alert.alert("Error", "No se pudo registrar la sesión. Intenta de nuevo.");
+    } finally {
+      setFinishing(false);
+    }
   };
 
   const toggleItem = (id: string) => {
@@ -156,6 +230,35 @@ export default function SessionScreen() {
     });
   };
 
+  // Sin asignación seleccionada — el usuario navegó directo a esta tab
+  if (!assignmentId) {
+    return (
+      <View style={styles.emptyContainer}>
+        <Ionicons name="list-outline" size={56} color="#9CA3AF" />
+        <Text style={styles.emptyTitle}>Sin tarea activa</Text>
+        <Text style={styles.emptyDesc}>
+          Selecciona una asignación desde la pestaña "Mis tareas" para iniciar una sesión.
+        </Text>
+        <TouchableOpacity style={styles.goToListBtn} onPress={() => router.replace("/(tabs)")}>
+          <Text style={styles.goToListText}>Ver mis tareas</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (loadingAssignment) {
+    return (
+      <View style={styles.emptyContainer}>
+        <ActivityIndicator size="large" color="#059669" />
+      </View>
+    );
+  }
+
+  const roomLabel = assignment?.rooms?.room_number
+    ? `Cuarto ${assignment.rooms.room_number}`
+    : "Cargando...";
+  const timeRange = assignment ? TIME_BLOCKS[assignment.time_block] : "";
+
   return (
     <ScrollView
       style={styles.container}
@@ -166,8 +269,13 @@ export default function SessionScreen() {
       <View style={styles.hero}>
         <View style={styles.heroRow}>
           <View>
-            <Text style={styles.heroRoom}>Cuarto {DEMO_ASSIGNMENT.room}</Text>
-            <Text style={styles.heroSub}>Piso {DEMO_ASSIGNMENT.floor} · {DEMO_ASSIGNMENT.timeRange}</Text>
+            <Text style={styles.heroRoom}>{roomLabel}</Text>
+            {assignment?.rooms?.section && (
+              <Text style={styles.heroSub}>{assignment.rooms.section} · {timeRange}</Text>
+            )}
+            {!assignment?.rooms?.section && timeRange && (
+              <Text style={styles.heroSub}>{timeRange}</Text>
+            )}
           </View>
           {started && (
             <View style={styles.timerBadge}>
@@ -177,26 +285,19 @@ export default function SessionScreen() {
           )}
         </View>
 
-        {DEMO_ASSIGNMENT.notes ? (
-          <View style={styles.notesBox}>
-            <Ionicons name="information-circle-outline" size={14} color="#A7F3D0" />
-            <Text style={styles.notesText}>{DEMO_ASSIGNMENT.notes}</Text>
-          </View>
-        ) : null}
-
         {/* GPS status */}
         <View style={styles.gpsRow}>
           <Ionicons
-            name={gpsGranted ? "location" : "location-outline"}
+            name={gpsStatus === "granted" ? "location" : "location-outline"}
             size={14}
-            color={gpsGranted ? "#A7F3D0" : "#6EE7B7"}
+            color={gpsStatus === "granted" ? "#A7F3D0" : "#6EE7B7"}
           />
           <Text style={styles.gpsText}>
-            {gpsGranted === null
+            {gpsStatus === "idle"
               ? "GPS se solicitará al iniciar"
-              : gpsGranted
+              : gpsStatus === "granted"
               ? "Ubicación registrada"
-              : "GPS no disponible"}
+              : "GPS no disponible — activa tu ubicación"}
           </Text>
         </View>
       </View>
@@ -212,7 +313,7 @@ export default function SessionScreen() {
         </View>
       </View>
 
-      {/* Checklist */}
+      {/* Checklist — deshabilitado hasta que se inicie la sesión */}
       {sections.map((sec) => (
         <ChecklistSection
           key={sec}
@@ -220,8 +321,15 @@ export default function SessionScreen() {
           items={CHECKLIST_ITEMS.filter((i) => i.section === sec)}
           checked={checked}
           onToggle={toggleItem}
+          disabled={!started}
         />
       ))}
+
+      {!started && (
+        <Text style={styles.checklistHint}>
+          Inicia la sesión para habilitar el checklist.
+        </Text>
+      )}
 
       {/* Action buttons */}
       <View style={styles.actions}>
@@ -233,14 +341,21 @@ export default function SessionScreen() {
         ) : (
           <>
             <TouchableOpacity
-              style={[styles.finishBtn, allDone && styles.finishBtnReady]}
+              style={[styles.finishBtn, allDone && styles.finishBtnReady, finishing && styles.btnDisabled]}
               onPress={handleFinish}
+              disabled={finishing}
               activeOpacity={0.85}
             >
-              <Ionicons name="checkmark-done" size={18} color="#fff" />
-              <Text style={styles.actionBtnText}>
-                {allDone ? "Finalizar y enviar" : "Finalizar sesión"}
-              </Text>
+              {finishing ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name="checkmark-done" size={18} color="#fff" />
+                  <Text style={styles.actionBtnText}>
+                    {allDone ? "Finalizar y enviar" : "Finalizar sesión"}
+                  </Text>
+                </>
+              )}
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -264,6 +379,25 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F9FAFB" },
   content: { padding: 16, paddingBottom: 32 },
 
+  emptyContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 32,
+    gap: 12,
+    backgroundColor: "#F9FAFB",
+  },
+  emptyTitle: { fontSize: 18, fontWeight: "700", color: "#374151" },
+  emptyDesc: { fontSize: 14, color: "#6B7280", textAlign: "center", lineHeight: 20 },
+  goToListBtn: {
+    marginTop: 8,
+    backgroundColor: "#059669",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  goToListText: { color: "#fff", fontWeight: "700", fontSize: 14 },
+
   hero: {
     backgroundColor: "#059669",
     borderRadius: 16,
@@ -283,8 +417,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   timerText: { color: "#fff", fontWeight: "700", fontSize: 14, fontVariant: ["tabular-nums"] },
-  notesBox: { flexDirection: "row", gap: 6, backgroundColor: "#047857", borderRadius: 8, padding: 8, marginBottom: 8 },
-  notesText: { fontSize: 12, color: "#A7F3D0", flex: 1 },
   gpsRow: { flexDirection: "row", alignItems: "center", gap: 5 },
   gpsText: { fontSize: 12, color: "#A7F3D0" },
 
@@ -303,6 +435,14 @@ const styles = StyleSheet.create({
   progressCount: { fontSize: 13, fontWeight: "700", color: "#059669" },
   progressTrack: { height: 6, backgroundColor: "#E5E7EB", borderRadius: 3 },
   progressFill: { height: 6, backgroundColor: "#059669", borderRadius: 3 },
+
+  checklistHint: {
+    textAlign: "center",
+    fontSize: 13,
+    color: "#9CA3AF",
+    marginTop: -4,
+    marginBottom: 10,
+  },
 
   section: {
     backgroundColor: "#fff",
@@ -356,6 +496,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   finishBtnReady: { backgroundColor: "#059669" },
+  btnDisabled: { opacity: 0.6 },
   pauseBtn: {
     borderWidth: 1.5,
     borderColor: "#059669",

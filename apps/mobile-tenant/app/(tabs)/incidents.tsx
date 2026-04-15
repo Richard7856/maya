@@ -1,3 +1,6 @@
+// Pantalla de incidentes del inquilino.
+// Carga los incidentes de la habitación del tenant (el backend filtra automáticamente).
+// Permite reportar nuevos incidentes — requiere room_id que se obtiene del contrato activo.
 import {
   View,
   Text,
@@ -9,54 +12,32 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  ActivityIndicator,
+  RefreshControl,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useState } from "react";
-
-// Demo incidents for this tenant's room
-const DEMO_INCIDENTS = [
-  {
-    id: "inc-001",
-    title: "Fuga en baño",
-    description: "El tubo debajo del lavabo tiene una fuga pequeña que gotea al piso.",
-    category: "plomería",
-    status: "in_review",
-    created_at: "07/04/2026",
-    updated_at: "08/04/2026",
-  },
-  {
-    id: "inc-002",
-    title: "Foco fundido en pasillo",
-    description: "El foco del pasillo principal lleva 3 días fundido.",
-    category: "electricidad",
-    status: "resolved",
-    created_at: "01/04/2026",
-    updated_at: "03/04/2026",
-  },
-  {
-    id: "inc-003",
-    title: "Puerta del cuarto no cierra bien",
-    description: "La chapa está descalibrada, la puerta no cierra con llave correctamente.",
-    category: "general",
-    status: "resolved",
-    created_at: "20/03/2026",
-    updated_at: "22/03/2026",
-  },
-];
+import { useState, useEffect, useCallback } from "react";
+import { incidentsApi, leasesApi } from "@maya/api-client";
+import type { Incident, Lease } from "@maya/types";
 
 const STATUS_CONFIG = {
   open: { label: "Abierto", color: "#F59E0B" },
-  in_review: { label: "En revisión", color: "#3B82F6" },
   in_progress: { label: "En proceso", color: "#7C3AED" },
   resolved: { label: "Resuelto", color: "#10B981" },
+  closed: { label: "Cerrado", color: "#6B7280" },
 } as const;
 
 const CATEGORIES = ["plomería", "electricidad", "general", "limpieza", "otro"] as const;
+type Category = (typeof CATEGORIES)[number];
 
-type IncidentStatus = keyof typeof STATUS_CONFIG;
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString("es-MX", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
 
-function IncidentCard({ incident }: { incident: (typeof DEMO_INCIDENTS)[0] }) {
-  const cfg = STATUS_CONFIG[incident.status as IncidentStatus];
+function IncidentCard({ incident }: { incident: Incident }) {
+  const status = incident.status as keyof typeof STATUS_CONFIG;
+  const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.open;
 
   return (
     <View style={styles.card}>
@@ -76,7 +57,7 @@ function IncidentCard({ incident }: { incident: (typeof DEMO_INCIDENTS)[0] }) {
         </View>
         <View style={styles.metaItem}>
           <Ionicons name="calendar-outline" size={12} color="#9CA3AF" />
-          <Text style={styles.metaText}>Reportado: {incident.created_at}</Text>
+          <Text style={styles.metaText}>{formatDate(incident.created_at)}</Text>
         </View>
       </View>
     </View>
@@ -85,27 +66,48 @@ function IncidentCard({ incident }: { incident: (typeof DEMO_INCIDENTS)[0] }) {
 
 function NewIncidentModal({
   visible,
+  roomId,
   onClose,
+  onCreated,
 }: {
   visible: boolean;
+  roomId: string | null;
   onClose: () => void;
+  onCreated: (incident: Incident) => void;
 }) {
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
-  const [category, setCategory] = useState<string>("general");
+  const [category, setCategory] = useState<Category>("general");
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!title.trim()) {
       Alert.alert("Campo requerido", "Por favor indica el título del incidente.");
       return;
     }
-    // In production: POST /api/v1/incidents with auth token
-    Alert.alert("Incidente reportado", "Tu incidente fue enviado a administración.", [
-      { text: "OK", onPress: onClose },
-    ]);
-    setTitle("");
-    setDesc("");
-    setCategory("general");
+    if (!roomId) {
+      Alert.alert("Error", "No se encontró tu habitación activa.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const newIncident = await incidentsApi.create({
+        room_id: roomId,
+        title: title.trim(),
+        description: desc.trim() || undefined,
+        category,
+      });
+      onCreated(newIncident);
+      setTitle("");
+      setDesc("");
+      setCategory("general");
+      onClose();
+    } catch {
+      Alert.alert("Error", "No se pudo enviar el incidente. Intenta de nuevo.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -116,7 +118,7 @@ function NewIncidentModal({
       >
         <View style={styles.modalHeader}>
           <Text style={styles.modalTitle}>Nuevo incidente</Text>
-          <TouchableOpacity onPress={onClose}>
+          <TouchableOpacity onPress={onClose} disabled={submitting}>
             <Ionicons name="close" size={24} color="#374151" />
           </TouchableOpacity>
         </View>
@@ -128,6 +130,7 @@ function NewIncidentModal({
             placeholder="Ej: Fuga en baño"
             value={title}
             onChangeText={setTitle}
+            editable={!submitting}
           />
 
           <Text style={styles.label}>Descripción</Text>
@@ -139,6 +142,7 @@ function NewIncidentModal({
             multiline
             numberOfLines={4}
             textAlignVertical="top"
+            editable={!submitting}
           />
 
           <Text style={styles.label}>Categoría</Text>
@@ -146,27 +150,30 @@ function NewIncidentModal({
             {CATEGORIES.map((cat) => (
               <TouchableOpacity
                 key={cat}
-                style={[
-                  styles.catChip,
-                  category === cat && styles.catChipActive,
-                ]}
+                style={[styles.catChip, category === cat && styles.catChipActive]}
                 onPress={() => setCategory(cat)}
+                disabled={submitting}
               >
-                <Text
-                  style={[
-                    styles.catText,
-                    category === cat && styles.catTextActive,
-                  ]}
-                >
+                <Text style={[styles.catText, category === cat && styles.catTextActive]}>
                   {cat}
                 </Text>
               </TouchableOpacity>
             ))}
           </View>
 
-          <TouchableOpacity style={styles.submitBtn} onPress={handleSubmit}>
-            <Ionicons name="send" size={16} color="#fff" />
-            <Text style={styles.submitBtnText}>Enviar reporte</Text>
+          <TouchableOpacity
+            style={[styles.submitBtn, submitting && styles.submitBtnDisabled]}
+            onPress={handleSubmit}
+            disabled={submitting}
+          >
+            {submitting ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="send" size={16} color="#fff" />
+                <Text style={styles.submitBtnText}>Enviar reporte</Text>
+              </>
+            )}
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -175,9 +182,48 @@ function NewIncidentModal({
 }
 
 export default function IncidentsScreen() {
+  const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [roomId, setRoomId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const open = DEMO_INCIDENTS.filter((i) => i.status !== "resolved");
-  const resolved = DEMO_INCIDENTS.filter((i) => i.status === "resolved");
+
+  const fetchData = useCallback(async () => {
+    try {
+      setError(null);
+      // Fetch en paralelo: incidentes + contrato activo (para obtener room_id al crear)
+      const [incidentData, leaseData] = await Promise.all([
+        incidentsApi.list(),
+        leasesApi.mine().catch(() => null as Lease | null),
+      ]);
+      setIncidents(incidentData);
+      if (leaseData) setRoomId(leaseData.room_id);
+    } catch {
+      setError("No se pudieron cargar los incidentes.");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchData();
+  };
+
+  const handleCreated = (newIncident: Incident) => {
+    // Agrega el nuevo incidente al inicio sin re-fetch
+    setIncidents((prev) => [newIncident, ...prev]);
+    Alert.alert("Incidente reportado", "Tu reporte fue enviado a administración.");
+  };
+
+  const open = incidents.filter((i) => i.status !== "resolved" && i.status !== "closed");
+  const resolved = incidents.filter((i) => i.status === "resolved" || i.status === "closed");
 
   return (
     <>
@@ -185,33 +231,47 @@ export default function IncidentsScreen() {
         style={styles.container}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#7C3AED" />}
       >
-        {/* Open incidents */}
-        {open.length > 0 && (
-          <>
-            <Text style={styles.sectionTitle}>En proceso ({open.length})</Text>
-            {open.map((inc) => (
-              <IncidentCard key={inc.id} incident={inc} />
-            ))}
-          </>
-        )}
-
-        {/* Resolved */}
-        <Text style={styles.sectionTitle}>Resueltos ({resolved.length})</Text>
-        {resolved.map((inc) => (
-          <IncidentCard key={inc.id} incident={inc} />
-        ))}
-
-        {/* Empty state */}
-        {DEMO_INCIDENTS.length === 0 && (
-          <View style={styles.emptyState}>
-            <Ionicons name="checkmark-done-circle" size={48} color="#10B981" />
-            <Text style={styles.emptyText}>Sin incidentes activos</Text>
+        {loading ? (
+          <View style={styles.centered}>
+            <ActivityIndicator size="large" color="#7C3AED" />
           </View>
+        ) : error ? (
+          <View style={styles.errorBox}>
+            <Ionicons name="alert-circle-outline" size={20} color="#EF4444" />
+            <Text style={styles.errorText}>{error}</Text>
+            <TouchableOpacity onPress={fetchData}>
+              <Text style={styles.retryText}>Reintentar</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <>
+            {open.length > 0 && (
+              <>
+                <Text style={styles.sectionTitle}>En proceso ({open.length})</Text>
+                {open.map((inc) => <IncidentCard key={inc.id} incident={inc} />)}
+              </>
+            )}
+
+            {resolved.length > 0 && (
+              <>
+                <Text style={styles.sectionTitle}>Resueltos ({resolved.length})</Text>
+                {resolved.map((inc) => <IncidentCard key={inc.id} incident={inc} />)}
+              </>
+            )}
+
+            {incidents.length === 0 && (
+              <View style={styles.emptyState}>
+                <Ionicons name="checkmark-done-circle" size={48} color="#10B981" />
+                <Text style={styles.emptyText}>Sin incidentes activos</Text>
+                <Text style={styles.emptyHint}>Toca + para reportar un problema</Text>
+              </View>
+            )}
+          </>
         )}
       </ScrollView>
 
-      {/* FAB — report new incident */}
       <TouchableOpacity
         style={styles.fab}
         onPress={() => setModalOpen(true)}
@@ -220,7 +280,12 @@ export default function IncidentsScreen() {
         <Ionicons name="add" size={28} color="#fff" />
       </TouchableOpacity>
 
-      <NewIncidentModal visible={modalOpen} onClose={() => setModalOpen(false)} />
+      <NewIncidentModal
+        visible={modalOpen}
+        roomId={roomId}
+        onClose={() => setModalOpen(false)}
+        onCreated={handleCreated}
+      />
     </>
   );
 }
@@ -228,6 +293,19 @@ export default function IncidentsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F9FAFB" },
   content: { padding: 16, paddingBottom: 80 },
+
+  centered: { paddingTop: 60, alignItems: "center" },
+
+  errorBox: {
+    backgroundColor: "#FEF2F2",
+    borderRadius: 12,
+    padding: 16,
+    alignItems: "center",
+    gap: 8,
+    marginTop: 20,
+  },
+  errorText: { fontSize: 14, color: "#DC2626", textAlign: "center" },
+  retryText: { fontSize: 14, fontWeight: "700", color: "#7C3AED" },
 
   sectionTitle: {
     fontSize: 14,
@@ -265,8 +343,9 @@ const styles = StyleSheet.create({
   badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, flexShrink: 0 },
   badgeText: { fontSize: 11, fontWeight: "600" },
 
-  emptyState: { alignItems: "center", paddingTop: 60, gap: 12 },
-  emptyText: { fontSize: 16, color: "#6B7280" },
+  emptyState: { alignItems: "center", paddingTop: 60, gap: 8 },
+  emptyText: { fontSize: 16, color: "#374151", fontWeight: "600" },
+  emptyHint: { fontSize: 13, color: "#9CA3AF" },
 
   fab: {
     position: "absolute",
@@ -284,7 +363,6 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
 
-  // Modal
   modalHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -329,5 +407,6 @@ const styles = StyleSheet.create({
     marginTop: 24,
     marginBottom: 8,
   },
+  submitBtnDisabled: { opacity: 0.6 },
   submitBtnText: { color: "#fff", fontWeight: "700", fontSize: 15 },
 });

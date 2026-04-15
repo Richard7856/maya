@@ -4,10 +4,15 @@ import {
   ScrollView,
   StyleSheet,
   TouchableOpacity,
-  Alert,
+  ActivityIndicator,
+  RefreshControl,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "expo-router";
+import { cleaningApi } from "@maya/api-client";
+import type { CleaningAssignment } from "@maya/types";
+import { useAuth } from "../../context/auth";
 
 // Time blocks map to 2-hour windows: 1=8-10, 2=10-12, 3=12-14, 4=14-16
 const TIME_BLOCKS: Record<number, string> = {
@@ -17,60 +22,36 @@ const TIME_BLOCKS: Record<number, string> = {
   4: "14:00 – 16:00",
 };
 
-// Demo assignments for today
-const DEMO = {
-  cleaner: { name: "María López" },
-  date: "09/04/2026",
-  building: "Torre Norte",
-  assignments: [
-    {
-      id: "ca-001",
-      room: "201-A",
-      floor: 2,
-      time_block: 1,
-      status: "completed",
-      notes: "Limpiar baño a fondo",
-    },
-    {
-      id: "ca-002",
-      room: "301-B",
-      floor: 3,
-      time_block: 2,
-      status: "in_progress",
-      notes: "",
-    },
-    {
-      id: "ca-003",
-      room: "302-A",
-      floor: 3,
-      time_block: 3,
-      status: "confirmed",
-      notes: "Inquilino pidió no molestar antes de las 12",
-    },
-    {
-      id: "ca-004",
-      room: "401-C",
-      floor: 4,
-      time_block: 4,
-      status: "confirmed",
-      notes: "",
-    },
-  ],
-};
-
 const STATUS_CONFIG = {
+  scheduled: { label: "Programado", color: "#9CA3AF", icon: "calendar-outline" },
   confirmed: { label: "Pendiente", color: "#F59E0B", icon: "time-outline" },
   in_progress: { label: "En proceso", color: "#3B82F6", icon: "sync-outline" },
   completed: { label: "Completado", color: "#10B981", icon: "checkmark-circle-outline" },
-  cancelled: { label: "Cancelado", color: "#EF4444", icon: "close-circle-outline" },
+  missed: { label: "No asistió", color: "#EF4444", icon: "close-circle-outline" },
+  late: { label: "Tardío", color: "#F97316", icon: "alert-circle-outline" },
 } as const;
 
 type AssignmentStatus = keyof typeof STATUS_CONFIG;
 
-function StatsBar() {
-  const total = DEMO.assignments.length;
-  const done = DEMO.assignments.filter((a) => a.status === "completed").length;
-  const inProgress = DEMO.assignments.filter((a) => a.status === "in_progress").length;
+// Supabase nested select returns room data under "rooms" key
+type AssignmentWithRoom = CleaningAssignment & {
+  rooms?: { room_number: string; section?: string | null };
+};
+
+function todayISO(): string {
+  return new Date().toISOString().split("T")[0];
+}
+
+function formatDate(iso: string): string {
+  const [y, m, d] = iso.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+function StatsBar({ assignments }: { assignments: AssignmentWithRoom[] }) {
+  const total = assignments.length;
+  const done = assignments.filter((a) => a.status === "completed").length;
+  const inProgress = assignments.filter((a) => a.status === "in_progress").length;
+  const pending = total - done - inProgress;
 
   return (
     <View style={styles.statsBar}>
@@ -90,7 +71,7 @@ function StatsBar() {
       </View>
       <View style={styles.statDivider} />
       <View style={styles.statItem}>
-        <Text style={[styles.statNum, { color: "#F59E0B" }]}>{total - done - inProgress}</Text>
+        <Text style={[styles.statNum, { color: "#F59E0B" }]}>{pending}</Text>
         <Text style={styles.statLabel}>Pendientes</Text>
       </View>
     </View>
@@ -101,17 +82,23 @@ function AssignmentCard({
   assignment,
   onStart,
 }: {
-  assignment: (typeof DEMO.assignments)[0];
+  assignment: AssignmentWithRoom;
   onStart: (id: string) => void;
 }) {
-  const cfg = STATUS_CONFIG[assignment.status as AssignmentStatus];
+  const status = assignment.status as AssignmentStatus;
+  const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.scheduled;
+  const roomLabel = assignment.rooms?.room_number
+    ? `Cuarto ${assignment.rooms.room_number}`
+    : `Cuarto ${assignment.room_id.slice(0, 6)}`;
 
   return (
     <View style={[styles.card, assignment.status === "completed" && styles.cardDone]}>
       <View style={styles.cardTop}>
         <View>
-          <Text style={styles.cardRoom}>Cuarto {assignment.room}</Text>
-          <Text style={styles.cardFloor}>Piso {assignment.floor}</Text>
+          <Text style={styles.cardRoom}>{roomLabel}</Text>
+          {assignment.rooms?.section && (
+            <Text style={styles.cardFloor}>{assignment.rooms.section}</Text>
+          )}
         </View>
         <View style={[styles.badge, { backgroundColor: cfg.color + "18" }]}>
           <Ionicons name={cfg.icon as any} size={12} color={cfg.color} />
@@ -126,14 +113,14 @@ function AssignmentCard({
         </Text>
       </View>
 
-      {assignment.notes ? (
+      {(assignment as any).notes ? (
         <View style={styles.notesRow}>
           <Ionicons name="document-text-outline" size={13} color="#9CA3AF" />
-          <Text style={styles.notesText}>{assignment.notes}</Text>
+          <Text style={styles.notesText}>{(assignment as any).notes}</Text>
         </View>
       ) : null}
 
-      {assignment.status === "confirmed" && (
+      {(assignment.status === "confirmed" || assignment.status === "scheduled") && (
         <TouchableOpacity
           style={styles.startBtn}
           onPress={() => onStart(assignment.id)}
@@ -160,39 +147,90 @@ function AssignmentCard({
 
 export default function IndexScreen() {
   const router = useRouter();
+  const { profile } = useAuth();
+  const [assignments, setAssignments] = useState<AssignmentWithRoom[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchAssignments = useCallback(async () => {
+    try {
+      setError(null);
+      const today = todayISO();
+      const data = await cleaningApi.listAssignments({
+        date_from: today,
+        date_to: today,
+      });
+      // Sort by time block ascending
+      setAssignments((data as AssignmentWithRoom[]).sort((a, b) => a.time_block - b.time_block));
+    } catch {
+      setError("No se pudieron cargar las asignaciones. Verifica tu conexión.");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchAssignments();
+  }, [fetchAssignments]);
 
   const handleStart = (id: string) => {
-    // In production: navigate to session screen with assignment ID
-    router.push("/session");
+    // Pasa el assignmentId como param para que Session lo cargue
+    router.push({ pathname: "/(tabs)/session", params: { assignmentId: id } });
   };
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchAssignments();
+  };
+
+  const today = todayISO();
 
   return (
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#059669" />}
     >
       {/* Header */}
       <View style={styles.hero}>
-        <Text style={styles.greeting}>Hola, {DEMO.cleaner.name.split(" ")[0]} 👋</Text>
-        <Text style={styles.dateLabel}>
-          {DEMO.date} · {DEMO.building}
+        <Text style={styles.greeting}>
+          Hola, {profile?.first_name ?? "—"} 👋
         </Text>
+        <Text style={styles.dateLabel}>{formatDate(today)}</Text>
       </View>
 
-      <StatsBar />
-
-      <Text style={styles.sectionTitle}>Asignaciones de hoy</Text>
-
-      {DEMO.assignments.sort((a, b) => a.time_block - b.time_block).map((a) => (
-        <AssignmentCard key={a.id} assignment={a} onStart={handleStart} />
-      ))}
-
-      {DEMO.assignments.length === 0 && (
-        <View style={styles.emptyState}>
-          <Ionicons name="calendar-outline" size={48} color="#9CA3AF" />
-          <Text style={styles.emptyText}>Sin asignaciones para hoy</Text>
+      {loading ? (
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color="#059669" />
         </View>
+      ) : error ? (
+        <View style={styles.errorBox}>
+          <Ionicons name="alert-circle-outline" size={20} color="#EF4444" />
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity onPress={fetchAssignments}>
+            <Text style={styles.retryText}>Reintentar</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <>
+          <StatsBar assignments={assignments} />
+
+          <Text style={styles.sectionTitle}>Asignaciones de hoy</Text>
+
+          {assignments.map((a) => (
+            <AssignmentCard key={a.id} assignment={a} onStart={handleStart} />
+          ))}
+
+          {assignments.length === 0 && (
+            <View style={styles.emptyState}>
+              <Ionicons name="calendar-outline" size={48} color="#9CA3AF" />
+              <Text style={styles.emptyText}>Sin asignaciones para hoy</Text>
+            </View>
+          )}
+        </>
       )}
     </ScrollView>
   );
@@ -210,6 +248,19 @@ const styles = StyleSheet.create({
   },
   greeting: { fontSize: 20, fontWeight: "700", color: "#fff", marginBottom: 4 },
   dateLabel: { fontSize: 13, color: "#A7F3D0" },
+
+  centered: { paddingTop: 60, alignItems: "center" },
+
+  errorBox: {
+    backgroundColor: "#FEF2F2",
+    borderRadius: 12,
+    padding: 16,
+    alignItems: "center",
+    gap: 8,
+    marginTop: 20,
+  },
+  errorText: { fontSize: 14, color: "#DC2626", textAlign: "center" },
+  retryText: { fontSize: 14, fontWeight: "700", color: "#059669" },
 
   statsBar: {
     backgroundColor: "#fff",

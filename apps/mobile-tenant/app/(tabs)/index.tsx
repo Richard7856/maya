@@ -1,25 +1,49 @@
+// Pantalla de inicio del inquilino.
+// Muestra: datos del contrato activo, próxima fecha de pago (calculada del lease),
+// count de incidentes abiertos, y resumen del contrato.
 import {
   View,
   Text,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
+  ActivityIndicator,
+  RefreshControl,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useState, useEffect, useCallback } from "react";
+import { leasesApi, incidentsApi } from "@maya/api-client";
+import type { Lease, Incident } from "@maya/types";
 
-// Demo data — represents a typical tenant's current state
-const DEMO = {
-  tenant: { name: "Carlos Mendoza", room: "301-B", building: "Torre Norte" },
-  lease: { status: "active", end_date: "31/08/2026", payment_day: 5 },
-  nextPayment: {
-    amount: 8500,
-    due_date: "05/05/2026",
-    status: "pending", // pending | overdue | paid
-    daysLeft: 26,
-  },
-  openIncidents: 1,
-  lastAccess: "Hoy 08:32",
+// Lease con datos de habitación joinados por Supabase
+type LeaseWithRoom = Lease & {
+  rooms?: { room_number: string; section?: string | null };
+  buildings?: { name: string };
 };
+
+function nextDueDate(paymentDay: number): { date: string; daysLeft: number } {
+  const today = new Date();
+  let due = new Date(today.getFullYear(), today.getMonth(), paymentDay);
+  // Si el día ya pasó este mes, apuntar al siguiente
+  if (due <= today) {
+    due = new Date(today.getFullYear(), today.getMonth() + 1, paymentDay);
+  }
+  const msPerDay = 1000 * 60 * 60 * 24;
+  const daysLeft = Math.round((due.getTime() - today.getTime()) / msPerDay);
+  return {
+    date: due.toLocaleDateString("es-MX", { day: "2-digit", month: "long", year: "numeric" }),
+    daysLeft,
+  };
+}
+
+function formatEndDate(iso: string | null): string {
+  if (!iso) return "Sin fecha fin";
+  return new Date(iso).toLocaleDateString("es-MX", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
 
 function StatusBadge({ label, color }: { label: string; color: string }) {
   return (
@@ -52,54 +76,114 @@ function SummaryCard({
 }
 
 export default function InicioScreen() {
-  const isOverdue = DEMO.nextPayment.status === "overdue";
-  const isPaid = DEMO.nextPayment.status === "paid";
-  const paymentColor = isPaid ? "#10B981" : isOverdue ? "#EF4444" : "#7C3AED";
-  const paymentLabel = isPaid ? "Pagado" : isOverdue ? "Vencido" : "Pendiente";
+  const [lease, setLease] = useState<LeaseWithRoom | null>(null);
+  const [openIncidents, setOpenIncidents] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchData = useCallback(async () => {
+    try {
+      setError(null);
+      const [leaseData, incidentData] = await Promise.all([
+        leasesApi.mine().catch(() => null as LeaseWithRoom | null),
+        incidentsApi.list().catch(() => [] as Incident[]),
+      ]);
+      setLease(leaseData as LeaseWithRoom | null);
+      const open = (incidentData as Incident[]).filter(
+        (i) => i.status !== "resolved" && i.status !== "closed"
+      );
+      setOpenIncidents(open.length);
+    } catch {
+      setError("No se pudo cargar la información. Verifica tu conexión.");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchData();
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color="#7C3AED" />
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={styles.centered}>
+        <Ionicons name="alert-circle-outline" size={40} color="#EF4444" />
+        <Text style={styles.errorText}>{error}</Text>
+        <TouchableOpacity style={styles.retryBtn} onPress={fetchData}>
+          <Text style={styles.retryBtnText}>Reintentar</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // Sin contrato activo
+  if (!lease) {
+    return (
+      <View style={styles.centered}>
+        <Ionicons name="home-outline" size={48} color="#9CA3AF" />
+        <Text style={styles.emptyTitle}>Sin contrato activo</Text>
+        <Text style={styles.emptyDesc}>Contacta al administrador de tu edificio.</Text>
+      </View>
+    );
+  }
+
+  const roomLabel = lease.rooms?.room_number ? `Cuarto ${lease.rooms.room_number}` : "—";
+  const buildingLabel = (lease as any).buildings?.name ?? "";
+  const { date: dueDate, daysLeft } = nextDueDate(lease.payment_day);
+  const isOverdue = daysLeft < 0;
 
   return (
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#7C3AED" />}
     >
       {/* Welcome header */}
       <View style={styles.hero}>
-        <Text style={styles.greeting}>Hola, {DEMO.tenant.name.split(" ")[0]} 👋</Text>
+        <Text style={styles.greeting}>Bienvenido 👋</Text>
         <Text style={styles.roomLabel}>
-          Cuarto {DEMO.tenant.room} · {DEMO.tenant.building}
+          {roomLabel}{buildingLabel ? ` · ${buildingLabel}` : ""}
         </Text>
         <StatusBadge label="Contrato activo" color="#10B981" />
       </View>
 
       {/* Next payment card */}
-      <View style={[styles.paymentCard, { borderTopColor: paymentColor }]}>
+      <View style={[styles.paymentCard, { borderTopColor: isOverdue ? "#EF4444" : "#7C3AED" }]}>
         <View style={styles.paymentHeader}>
           <Text style={styles.paymentTitle}>Próximo pago</Text>
-          <StatusBadge label={paymentLabel} color={paymentColor} />
+          <StatusBadge
+            label={isOverdue ? "Vencido" : "Pendiente"}
+            color={isOverdue ? "#EF4444" : "#7C3AED"}
+          />
         </View>
-
-        <Text style={[styles.paymentAmount, { color: paymentColor }]}>
-          ${DEMO.nextPayment.amount.toLocaleString("es-MX")} MXN
+        <Text style={[styles.paymentAmount, { color: isOverdue ? "#EF4444" : "#7C3AED" }]}>
+          ${Number(lease.monthly_rate).toLocaleString("es-MX")} MXN
         </Text>
-
         <Text style={styles.paymentDue}>
-          Vence el {DEMO.nextPayment.due_date}
-          {!isPaid && (
-            <Text style={{ color: isOverdue ? "#EF4444" : "#6B7280" }}>
-              {" "}({isOverdue ? `${DEMO.nextPayment.daysLeft * -1} días de retraso` : `en ${DEMO.nextPayment.daysLeft} días`})
-            </Text>
-          )}
+          Día {lease.payment_day} de cada mes
+          <Text style={{ color: "#9CA3AF" }}> · Próx: {dueDate}</Text>
         </Text>
-
-        {!isPaid && (
-          <TouchableOpacity
-            style={[styles.payBtn, { backgroundColor: paymentColor }]}
-            activeOpacity={0.85}
-          >
-            <Ionicons name="card" size={18} color="#fff" />
-            <Text style={styles.payBtnText}>Pagar ahora</Text>
-          </TouchableOpacity>
+        {isOverdue && (
+          <View style={styles.overdueWarning}>
+            <Ionicons name="warning-outline" size={14} color="#EF4444" />
+            <Text style={styles.overdueText}>Pago vencido — contacta a administración</Text>
+          </View>
         )}
       </View>
 
@@ -109,48 +193,27 @@ export default function InicioScreen() {
         <SummaryCard
           icon="warning-outline"
           label="Incidentes abiertos"
-          value={String(DEMO.openIncidents)}
+          value={String(openIncidents)}
           accent="#F59E0B"
         />
         <SummaryCard
-          icon="key-outline"
-          label="Último acceso"
-          value={DEMO.lastAccess}
+          icon="calendar-outline"
+          label="Día de pago"
+          value={`Día ${lease.payment_day} de cada mes`}
           accent="#7C3AED"
         />
         <SummaryCard
-          icon="calendar-outline"
+          icon="document-text-outline"
           label="Fin de contrato"
-          value={DEMO.lease.end_date}
+          value={formatEndDate(lease.end_date ?? null)}
           accent="#3B82F6"
         />
         <SummaryCard
           icon="home-outline"
-          label="Día de pago"
-          value={`Día ${DEMO.lease.payment_day} de cada mes`}
+          label="Estado del contrato"
+          value={lease.status === "active" ? "Activo" : lease.status}
           accent="#10B981"
         />
-      </View>
-
-      {/* Recent activity placeholder */}
-      <Text style={styles.sectionTitle}>Actividad reciente</Text>
-      <View style={styles.activityCard}>
-        <Ionicons name="checkmark-circle" size={18} color="#10B981" />
-        <Text style={styles.activityText}>
-          Pago de abril recibido — 02/04/2026
-        </Text>
-      </View>
-      <View style={styles.activityCard}>
-        <Ionicons name="warning" size={18} color="#F59E0B" />
-        <Text style={styles.activityText}>
-          Incidente #42 — Fuga en baño (en revisión)
-        </Text>
-      </View>
-      <View style={styles.activityCard}>
-        <Ionicons name="log-in-outline" size={18} color="#7C3AED" />
-        <Text style={styles.activityText}>
-          Acceso registrado — Hoy 08:32
-        </Text>
       </View>
     </ScrollView>
   );
@@ -159,6 +222,25 @@ export default function InicioScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F9FAFB" },
   content: { padding: 16, paddingBottom: 32 },
+
+  centered: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 32,
+    gap: 12,
+    backgroundColor: "#F9FAFB",
+  },
+  errorText: { fontSize: 14, color: "#DC2626", textAlign: "center" },
+  retryBtn: {
+    backgroundColor: "#7C3AED",
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  retryBtnText: { color: "#fff", fontWeight: "700" },
+  emptyTitle: { fontSize: 18, fontWeight: "700", color: "#374151" },
+  emptyDesc: { fontSize: 14, color: "#9CA3AF", textAlign: "center" },
 
   hero: {
     backgroundColor: "#7C3AED",
@@ -183,21 +265,34 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
-  paymentHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+  paymentHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
   paymentTitle: { fontSize: 15, fontWeight: "600", color: "#374151" },
   paymentAmount: { fontSize: 32, fontWeight: "800", marginBottom: 4 },
-  paymentDue: { fontSize: 13, color: "#6B7280", marginBottom: 14 },
-  payBtn: {
+  paymentDue: { fontSize: 13, color: "#6B7280" },
+  overdueWarning: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    paddingVertical: 12,
-    borderRadius: 12,
+    gap: 6,
+    marginTop: 10,
+    backgroundColor: "#FEF2F2",
+    borderRadius: 8,
+    padding: 8,
   },
-  payBtnText: { color: "#fff", fontWeight: "700", fontSize: 15 },
+  overdueText: { fontSize: 12, color: "#EF4444" },
 
-  sectionTitle: { fontSize: 14, fontWeight: "700", color: "#6B7280", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 10 },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#6B7280",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    marginBottom: 10,
+  },
 
   statsGrid: { gap: 10, marginBottom: 20 },
   summaryCard: {
@@ -214,15 +309,4 @@ const styles = StyleSheet.create({
   },
   summaryLabel: { fontSize: 12, color: "#9CA3AF", marginBottom: 2 },
   summaryValue: { fontSize: 14, fontWeight: "600", color: "#111827" },
-
-  activityCard: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 8,
-  },
-  activityText: { fontSize: 13, color: "#374151", flex: 1 },
 });
