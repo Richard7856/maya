@@ -17,6 +17,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "expo-router";
 import { incidentsApi, leasesApi } from "@maya/api-client";
 import type { Incident, Lease } from "@maya/types";
 
@@ -35,12 +36,12 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString("es-MX", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
-function IncidentCard({ incident }: { incident: Incident }) {
+function IncidentCard({ incident, onPress }: { incident: Incident; onPress: () => void }) {
   const status = incident.status as keyof typeof STATUS_CONFIG;
   const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.open;
 
   return (
-    <View style={styles.card}>
+    <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.8}>
       <View style={styles.cardHeader}>
         <Text style={styles.cardTitle}>{incident.title}</Text>
         <View style={[styles.badge, { backgroundColor: cfg.color + "18" }]}>
@@ -59,8 +60,12 @@ function IncidentCard({ incident }: { incident: Incident }) {
           <Ionicons name="calendar-outline" size={12} color="#9CA3AF" />
           <Text style={styles.metaText}>{formatDate(incident.created_at)}</Text>
         </View>
+        <View style={styles.metaItem}>
+          <Ionicons name="chevron-forward" size={12} color="#D1D5DB" />
+          <Text style={[styles.metaText, { color: "#D1D5DB" }]}>Ver detalle</Text>
+        </View>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -182,6 +187,7 @@ function NewIncidentModal({
 }
 
 export default function IncidentsScreen() {
+  const router = useRouter();
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -250,14 +256,26 @@ export default function IncidentsScreen() {
             {open.length > 0 && (
               <>
                 <Text style={styles.sectionTitle}>En proceso ({open.length})</Text>
-                {open.map((inc) => <IncidentCard key={inc.id} incident={inc} />)}
+                {open.map((inc) => (
+                  <IncidentCard
+                    key={inc.id}
+                    incident={inc}
+                    onPress={() => router.push(`/incident/${inc.id}` as any)}
+                  />
+                ))}
               </>
             )}
 
             {resolved.length > 0 && (
               <>
                 <Text style={styles.sectionTitle}>Resueltos ({resolved.length})</Text>
-                {resolved.map((inc) => <IncidentCard key={inc.id} incident={inc} />)}
+                {resolved.map((inc) => (
+                  <IncidentCard
+                    key={inc.id}
+                    incident={inc}
+                    onPress={() => router.push(`/incident/${inc.id}` as any)}
+                  />
+                ))}
               </>
             )}
 
