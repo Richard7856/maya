@@ -248,6 +248,8 @@ export interface Ticket {
   status: TicketStatus;
   priority: IncidentPriority;
   due_date: string | null;
+  // Foto de evidencia subida por personal de limpieza al reportar un desperfecto
+  evidence_url: string | null;
   created_at: string;
 }
 

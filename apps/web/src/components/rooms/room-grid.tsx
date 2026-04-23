@@ -6,6 +6,7 @@ import { buildingsApi } from "@maya/api-client";
 import type { Room, RoomStatus } from "@maya/types";
 import { RoomCard } from "./room-card";
 import { StatusFilter } from "./status-filter";
+import { NewRoomDialog } from "./new-room-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function RoomGrid({ buildingId }: { buildingId: string }) {
@@ -25,9 +26,19 @@ export function RoomGrid({ buildingId }: { buildingId: string }) {
       .finally(() => setLoading(false));
   }, [buildingId, statusFilter]);
 
+  const handleRoomUpdated = (updated: Room) => {
+    setRooms((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+  };
+
   return (
     <div className="space-y-4">
-      <StatusFilter />
+      <div className="flex items-center justify-between">
+        <StatusFilter />
+        <NewRoomDialog
+          buildingId={buildingId}
+          onCreated={(r) => setRooms((prev) => [...prev, r])}
+        />
+      </div>
 
       {loading && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -50,7 +61,12 @@ export function RoomGrid({ buildingId }: { buildingId: string }) {
       {!loading && !error && rooms.length > 0 && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {rooms.map((room) => (
-            <RoomCard key={room.id} room={room} />
+            <RoomCard
+              key={room.id}
+              room={room}
+              buildingId={buildingId}
+              onUpdated={handleRoomUpdated}
+            />
           ))}
         </div>
       )}

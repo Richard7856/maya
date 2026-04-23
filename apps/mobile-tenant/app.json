@@ -10,7 +10,7 @@
     "ios": { "supportsTablet": false, "bundleIdentifier": "app.maya.tenant" },
     "android": { "package": "app.maya.tenant", "adaptiveIcon": { "backgroundColor": "#ffffff" } },
     "web": { "bundler": "metro", "output": "static" },
-    "plugins": ["expo-router", "expo-font"],
+    "plugins": ["expo-router", "expo-font", "expo-notifications"],
     "experiments": { "typedRoutes": true }
   }
 }

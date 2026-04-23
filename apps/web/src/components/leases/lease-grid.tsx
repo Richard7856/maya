@@ -6,6 +6,7 @@ import { leasesApi } from "@maya/api-client";
 import type { Lease, LeaseStatus } from "@maya/types";
 import { LeaseCard } from "./lease-card";
 import { LeaseStatusFilter } from "./lease-status-filter";
+import { NewLeaseDialog } from "./new-lease-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function LeaseGrid() {
@@ -27,7 +28,10 @@ export function LeaseGrid() {
 
   return (
     <div className="space-y-4">
-      <LeaseStatusFilter />
+      <div className="flex items-center justify-between">
+        <LeaseStatusFilter />
+        <NewLeaseDialog onCreated={(lease) => setLeases((prev) => [lease, ...prev])} />
+      </div>
 
       {loading && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

@@ -20,9 +20,10 @@ router = APIRouter(prefix="/storage", tags=["storage"])
 
 # Allowed buckets per role to prevent unauthorized storage access
 ALLOWED_BUCKETS = {
-    "admin": ["documents", "incidents", "contracts", "profiles"],
+    # receipts: evidencia fotográfica de compras del marketplace
+    "admin": ["documents", "incidents", "contracts", "profiles", "receipts"],
     "tenant": ["profiles", "incidents"],
-    "cleaning": ["cleaning-sessions"],
+    "cleaning": ["cleaning-sessions", "receipts"],  # staff de limpieza también compra materiales
     "security": [],
 }
 

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { AlertTriangle, Building2, CreditCard, FileText, LogOut, SprayCan, Ticket, Users } from "lucide-react";
+import { AlertTriangle, Building2, CreditCard, FileText, LogOut, MessageSquareWarning, Package, ShoppingCart, SprayCan, Ticket, Users } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -15,10 +15,19 @@ const navItems = [
   { href: "/payments",  label: "Pagos",      icon: CreditCard },
   { href: "/incidents", label: "Incidentes", icon: AlertTriangle },
   { href: "/tickets",   label: "Tickets",    icon: Ticket },
-  { href: "/cleaning",  label: "Limpieza",   icon: SprayCan },
+  { href: "/cleaning",   label: "Limpieza",    icon: SprayCan },
+  { href: "/complaints", label: "Quejas",       icon: MessageSquareWarning },
+  { href: "/providers",  label: "Proveedores", icon: Package },
+  { href: "/items",      label: "Catálogo",    icon: ShoppingCart },
 ];
 
-export function Sidebar() {
+type SidebarProps = {
+  // onClose: llamado al seleccionar un ítem — DashboardShell lo usa para cerrar el drawer en mobile.
+  // En desktop este prop se ignora porque el sidebar siempre está visible.
+  onClose?: () => void;
+};
+
+export function Sidebar({ onClose }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
 
@@ -31,8 +40,20 @@ export function Sidebar() {
 
   return (
     <aside className="flex h-screen w-56 flex-col border-r bg-sidebar text-sidebar-foreground">
-      <div className="flex h-14 items-center px-4">
+      {/* Header — en desktop muestra el logo solo; en mobile muestra logo + X para cerrar */}
+      <div className="flex h-14 items-center justify-between px-4">
         <span className="text-lg font-bold text-sidebar-primary">Maya</span>
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="rounded-md p-1 text-sidebar-foreground hover:bg-sidebar-accent/50 md:hidden"
+            aria-label="Cerrar menú"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
       </div>
       <Separator />
       <nav className="flex-1 space-y-1 px-2 py-3">
@@ -42,6 +63,7 @@ export function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
+              onClick={onClose}
               className={cn(
                 "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                 isActive

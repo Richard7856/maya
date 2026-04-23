@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import buildings, cleaning, incidents, leases, payments, storage, tickets, users
+from app.routers import buildings, cleaning, complaints, incidents, items, leases, payments, providers, storage, tickets, users
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -43,6 +43,9 @@ app.include_router(leases.router, prefix="/api/v1")
 app.include_router(incidents.router, prefix="/api/v1")
 app.include_router(tickets.router, prefix="/api/v1")
 app.include_router(cleaning.router, prefix="/api/v1")
+app.include_router(providers.router, prefix="/api/v1")
+app.include_router(items.router, prefix="/api/v1")
+app.include_router(complaints.router, prefix="/api/v1")
 
 
 @app.get("/health")

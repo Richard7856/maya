@@ -10,7 +10,7 @@
     "ios": { "supportsTablet": false, "bundleIdentifier": "app.maya.cleaning" },
     "android": { "package": "app.maya.cleaning", "adaptiveIcon": { "backgroundColor": "#ffffff" } },
     "web": { "bundler": "metro", "output": "static" },
-    "plugins": ["expo-router", "expo-font"],
+    "plugins": ["expo-router", "expo-font", "expo-notifications", "expo-image-picker"],
     "experiments": { "typedRoutes": true }
   }
 }

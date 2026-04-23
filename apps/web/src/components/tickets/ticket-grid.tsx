@@ -20,6 +20,7 @@ import type { TicketStatus, TicketType } from "@maya/types";
 import { TicketCard, type TicketWithRoom } from "./ticket-card";
 import { TicketFilter } from "./ticket-filter";
 import { TicketSheet, type TicketWithContext } from "./ticket-sheet";
+import { NewTicketDialog } from "./new-ticket-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function TicketGrid() {
@@ -55,7 +56,10 @@ export function TicketGrid() {
   return (
     <>
       <div className="space-y-4">
-        <TicketFilter />
+        <div className="flex items-center justify-between">
+          <TicketFilter />
+          <NewTicketDialog onCreated={(t) => setTickets((prev) => [t as TicketWithContext, ...prev])} />
+        </div>
 
         {loading && (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

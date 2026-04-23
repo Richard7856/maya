@@ -37,6 +37,26 @@ export default function TabsLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="providers"
+        options={{
+          title: "Proveedores",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="business-outline" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="report"
+        options={{
+          title: "Reportar",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="warning-outline" size={size} color={color} />
+          ),
+          // Badge roja para que sea visible al tener algo que reportar
+          tabBarBadgeStyle: { display: "none" },
+        }}
+      />
     </Tabs>
   );
 }

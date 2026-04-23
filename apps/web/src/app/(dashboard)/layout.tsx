@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { Sidebar } from "@/components/dashboard/sidebar";
+import { DashboardShell } from "@/components/dashboard/dashboard-shell";
 import { ApiProvider } from "@/components/dashboard/api-provider";
 
 export default async function DashboardLayout({
@@ -17,12 +17,11 @@ export default async function DashboardLayout({
     redirect("/login");
   }
 
+  // DashboardShell es un Client Component que gestiona el estado del sidebar en mobile.
+  // Este layout queda Server Component — solo maneja auth guard.
   return (
-    <div className="flex h-screen">
-      <Sidebar />
-      <main className="flex-1 overflow-y-auto bg-muted/30 p-6">
-        <ApiProvider>{children}</ApiProvider>
-      </main>
-    </div>
+    <DashboardShell>
+      <ApiProvider>{children}</ApiProvider>
+    </DashboardShell>
   );
 }

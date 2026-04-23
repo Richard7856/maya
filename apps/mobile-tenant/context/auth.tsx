@@ -14,6 +14,7 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 import { setAuthToken, usersApi } from "@maya/api-client";
 import type { UserProfile } from "@maya/types";
+import { usePushNotifications } from "../hooks/usePushNotifications";
 
 type AuthContextValue = {
   session: Session | null;
@@ -28,8 +29,11 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  // isLoading: true while resolving the initial session from AsyncStorage
   const [isLoading, setIsLoading] = useState(true);
+
+  // Registra el push token cuando hay sesión activa.
+  // Fire-and-forget: no bloquea el flujo si falla.
+  usePushNotifications(!!session);
 
   useEffect(() => {
     // Load persisted session on mount (AsyncStorage is async)

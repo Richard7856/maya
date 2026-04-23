@@ -26,7 +26,7 @@ import uvicorn
 uvicorn.run(
     "app.main:app",
     host="0.0.0.0",
-    port=8000,
+    port=8001,
     http="h11",       # pure-Python HTTP parser (no httptools C extension)
     loop="asyncio",   # built-in loop (no uvloop C extension)
 )
