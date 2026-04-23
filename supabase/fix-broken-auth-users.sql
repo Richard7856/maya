@@ -1,22 +1,20 @@
 -- ============================================================
--- fix-broken-auth-users.sql
+-- fix-broken-auth-users.sql  (v3)
 --
--- Los 7 usuarios demo (ba…, bb…, bc…) quedaron en estado roto
--- en auth.users después de intentos de seed fallidos.
--- GoTrue no puede leerlos ni borrarlos vía Admin API (devuelve 500).
+-- Los 7 usuarios demo quedaron en estado roto en auth.users.
+-- GoTrue Admin API no puede tocarlos (devuelve 500 en todo).
+-- La única solución es borrarlos directamente vía SQL.
 --
--- CÓMO USAR:
---   1. Supabase Dashboard → SQL Editor
---   2. Pega este script completo y ejecuta
---   3. Deberías ver "7 broken auth users deleted"
---   4. Después corre: node supabase/seed-users.mjs
+-- El problema en cascada:
+--   auth.users → (trigger) → user_profiles → leases (FK)
+-- Por eso hay que limpiar los datos de negocio primero,
+-- luego los usuarios, y luego correr seed-data.sql de nuevo.
 --
--- SEGURO: no toca al admin (72c1b269-...) ni los datos de negocio.
--- Solo borra entradas rotas de auth.* para los 7 UUIDs demo.
+-- PASOS COMPLETOS:
+--   1. Corre este script en SQL Editor  → "Done. Run seed-users.mjs"
+--   2. node supabase/seed-users.mjs     → 8 usuarios ✅
+--   3. Corre seed-data.sql en SQL Editor → datos de negocio restaurados
 -- ============================================================
-
--- Usamos texto plano en todas las comparaciones para evitar errores
--- de tipo entre columnas uuid y varchar según la versión de GoTrue.
 
 DO $$
 DECLARE
@@ -29,39 +27,66 @@ DECLARE
     'bb000002-0000-4000-8000-000000000002',
     'bc000001-0000-4000-8000-000000000001'
   ];
-  deleted_count INT;
+  deleted_auth INT;
 BEGIN
-  -- 1. Limpiar tablas dependientes (leaf → root)
-  --    Todas las comparaciones en ::text para compatibilidad con varchar y uuid
 
-  -- audit_log_entries guarda user_id como campo JSON
+  -- ── PASO 1: limpiar datos de negocio que referencian a estos usuarios ────────
+  -- Orden leaf → root para respetar FKs
+
+  DELETE FROM ticket_items;
+  DELETE FROM tickets;
+
+  DELETE FROM incident_updates;
+  DO $inner$ BEGIN
+    DELETE FROM incident_photos;
+  EXCEPTION WHEN undefined_table THEN NULL;
+  END $inner$;
+  DELETE FROM incidents;
+
+  DELETE FROM cleaning_sessions;
+  DELETE FROM cleaning_assignments;
+
+  DELETE FROM notification_recipients;
+  DELETE FROM notifications;
+
+  DELETE FROM guest_accesses;
+  DELETE FROM complaints;
+  DELETE FROM payments;
+  DELETE FROM leases;
+  DELETE FROM rooms;
+  DELETE FROM buildings;
+
+  -- ── PASO 2: limpiar tablas internas de auth para estos 7 UUIDs ──────────────
+
   DELETE FROM auth.audit_log_entries
     WHERE payload->>'user_id' = ANY(v_ids);
 
-  -- refresh_tokens.user_id es varchar en Supabase hosted
   DELETE FROM auth.refresh_tokens
-    WHERE user_id = ANY(v_ids);
+    WHERE user_id = ANY(v_ids);          -- varchar
 
-  -- sessions.user_id es uuid → casteamos el array
   DELETE FROM auth.sessions
-    WHERE user_id::text = ANY(v_ids);
+    WHERE user_id::text = ANY(v_ids);    -- uuid → text
 
-  -- mfa_factors.user_id es uuid → casteamos
   DELETE FROM auth.mfa_factors
     WHERE user_id::text = ANY(v_ids);
 
-  -- identities.user_id es uuid → casteamos
   DELETE FROM auth.identities
     WHERE user_id::text = ANY(v_ids);
 
-  -- 2. Borrar los usuarios rotos de la tabla principal
-  DELETE FROM auth.users
-    WHERE id::text = ANY(v_ids);
-  GET DIAGNOSTICS deleted_count = ROW_COUNT;
-
-  -- 3. Limpiar user_profiles para que seed-users.mjs los recree limpios
+  -- ── PASO 3: borrar user_profiles (ya sin referencias de negocio) ─────────────
   DELETE FROM public.user_profiles
     WHERE id::text = ANY(v_ids);
 
-  RAISE NOTICE '✅ % broken auth users deleted. Now run: node supabase/seed-users.mjs', deleted_count;
+  -- ── PASO 4: borrar los usuarios rotos de auth ────────────────────────────────
+  DELETE FROM auth.users
+    WHERE id::text = ANY(v_ids);
+  GET DIAGNOSTICS deleted_auth = ROW_COUNT;
+
+  RAISE NOTICE '';
+  RAISE NOTICE '✅ Done. % auth users deleted.', deleted_auth;
+  RAISE NOTICE '';
+  RAISE NOTICE 'Próximos pasos:';
+  RAISE NOTICE '  1. node supabase/seed-users.mjs        (recrea los 7 usuarios + user_profiles)';
+  RAISE NOTICE '  2. seed-data.sql en SQL Editor          (restaura edificios, contratos, tickets…)';
+
 END $$;
