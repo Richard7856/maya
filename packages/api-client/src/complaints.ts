@@ -20,7 +20,17 @@ export interface Complaint {
 
 export type ComplaintStatus = "open" | "investigating" | "resolved" | "closed";
 
+export interface CreateComplaintBody {
+  category:     string;   // "ruido" | "daños" | "limpieza" | "seguridad" | "otro"
+  description:  string;
+  is_anonymous?: boolean; // default true en el backend
+}
+
 export const complaintsApi = {
+  // Tenant: crea una queja. El backend infiere room_id/building_id del contrato activo.
+  create: (body: CreateComplaintBody) =>
+    apiClient.post<Complaint>("/complaints", body).then((r) => r.data),
+
   list: (params?: {
     status?: ComplaintStatus;
     building_id?: string;

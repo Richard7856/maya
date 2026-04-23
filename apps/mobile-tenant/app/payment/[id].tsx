@@ -86,8 +86,8 @@ export default function PaymentDetailScreen() {
   const load = async () => {
     try {
       setError(null);
-      // El backend scope automáticamente al tenant — devuelve solo sus pagos
-      const payments = await paymentsApi.list();
+      // mine() usa /payments/mine — tenant-scoped. list() es admin-only (daría 403)
+      const payments = await paymentsApi.mine();
       const found = payments.find((p) => p.id === id);
       if (!found) throw new Error("Pago no encontrado");
       setPayment(found);

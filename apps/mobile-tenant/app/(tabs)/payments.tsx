@@ -89,7 +89,8 @@ export default function PaymentsScreen() {
   const fetchPayments = useCallback(async () => {
     try {
       setError(null);
-      const data = await paymentsApi.list();
+      // mine() usa /payments/mine — endpoint tenant-scoped (list() es admin-only y daría 403)
+      const data = await paymentsApi.mine();
       // Ordenar: más reciente primero
       setPayments(data.sort((a, b) =>
         new Date(b.due_date).getTime() - new Date(a.due_date).getTime()

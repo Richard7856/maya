@@ -20,6 +20,13 @@ export const paymentsApi = {
       .get<Payment[]>("/payments", { params })
       .then((r) => r.data),
 
+  // Tenant endpoint — returns only payments for the authenticated tenant's active lease.
+  // Use this in the mobile tenant app instead of list() which is admin-only (403).
+  mine: () =>
+    apiClient
+      .get<Payment[]>("/payments/mine")
+      .then((r) => r.data),
+
   // Creates a Stripe PaymentIntent server-side and returns the client_secret
   createIntent: (paymentId: string) =>
     apiClient

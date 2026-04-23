@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from supabase import Client
 
 from app.config import get_settings
-from app.dependencies.auth import require_admin, require_tenant
+from app.dependencies.auth import get_current_user, require_admin, require_tenant
 from app.dependencies.supabase import get_supabase_admin
 from app.integrations.n8n import trigger_workflow
 from app.integrations.push import send_push_to_user
@@ -134,6 +134,40 @@ async def create_payment_intent(
         "payment_id": str(payment_id),
         "amount": float(payment["amount"]),
     }
+
+
+@router.get("/mine")
+async def list_my_payments(
+    current_user: Annotated[UserProfile, Depends(require_tenant)],
+    supabase: Annotated[Client, Depends(get_supabase_admin)],
+):
+    """Returns all payments for the authenticated tenant's active lease.
+
+    Scoped to the tenant — no admin access needed, no risk of cross-tenant leak.
+    Ordered most-recent first so the mobile list shows the current month at top.
+    """
+    # Buscar el lease activo del tenant para obtener el lease_id
+    lease_result = (
+        supabase.table("leases")
+        .select("id")
+        .eq("tenant_id", str(current_user.id))
+        .eq("status", "active")
+        .limit(1)
+        .execute()
+    )
+    if not lease_result.data:
+        return []  # Sin contrato activo → lista vacía
+
+    lease_id = lease_result.data[0]["id"]
+
+    result = (
+        supabase.table("payments")
+        .select("id, lease_id, amount, due_date, paid_at, status, stripe_payment_intent_id, receipt_url")
+        .eq("lease_id", lease_id)
+        .order("due_date", desc=True)
+        .execute()
+    )
+    return result.data
 
 
 @router.get("/mine/access-code")
